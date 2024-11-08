@@ -82,9 +82,3 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
     );
   }
 }
-
-void startGame() {
-  // TODO: Bluetooth pairing logic goes here
-  // ignore: avoid_print
-  print('Start Game button pressed');
-}

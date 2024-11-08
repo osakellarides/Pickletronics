@@ -1,9 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 class StartGameView extends StatefulWidget {
-  const StartGameView({Key? key}) : super(key: key);
+  const StartGameView({super.key});
 
   @override
   _StartGameViewState createState() => _StartGameViewState();
@@ -12,29 +13,76 @@ class StartGameView extends StatefulWidget {
 class _StartGameViewState extends State<StartGameView> {
   final FlutterBluePlus _flutterBlue = FlutterBluePlus();
   List<BluetoothDevice> _devicesList = [];
-  late StreamSubscription<List<ScanResult>> _scanSubscription;
+  StreamSubscription<List<ScanResult>>? _scanSubscription;
   bool isScanning = false;
 
   @override
   void initState() {
     super.initState();
-    // Initialize scan results subscription
-    _scanSubscription = FlutterBluePlus.onScanResults.listen((results) {
-      if (results.isNotEmpty) {
-        ScanResult r = results.last; // Get the most recently found device
-        if (!_devicesList.contains(r.device)) {
-          setState(() {
-            _devicesList.add(r.device); // Add device if not already in the list
-          });
-        }
-        print('${r.device.remoteId}: "${r.advertisementData.advName}" found');
+    _initializeScan();
+  }
+
+  Future<void> _initializeScan() async {
+    await _requestPermissions();
+    _checkBluetoothState();
+  }
+
+  Future<void> _requestPermissions() async {
+    // Request Bluetooth and location permissions
+    await Permission.bluetooth.request();
+    await Permission.bluetoothScan.request();
+    await Permission.bluetoothConnect.request();
+    await Permission.locationWhenInUse.request();
+  }
+
+  void _checkBluetoothState() {
+    // Listen to Bluetooth state and start scanning if Bluetooth is ON
+    FlutterBluePlus.adapterState.listen((state) {
+      if (state == BluetoothAdapterState.on && !isScanning) {
+        _startScanning();
+      } else if (state != BluetoothAdapterState.on) {
+        print("Bluetooth is OFF or not supported.");
       }
-    }, onError: (e) => print(e));
+    });
+  }
+
+  Future<void> _startScanning() async {
+    if (isScanning) return; // Prevent duplicate scans
+    setState(() {
+      isScanning = true;
+      _devicesList.clear();
+    });
+
+    print("Starting scan...");
+    await FlutterBluePlus.startScan(timeout: const Duration(seconds: 60));
+
+    _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
+      setState(() {
+        _devicesList = results.map((result) => result.device).toList();
+      });
+      for (ScanResult result in results) {
+        print('Device found: ${result.device.remoteId}: "${result.device.name}"');
+      }
+    }, onError: (e) {
+      print("Error during scan: $e");
+      setState(() {
+        isScanning = false;
+      });
+    });
+
+    // Wait for scan completion
+    FlutterBluePlus.isScanning.where((scanning) => scanning == false).first.then((_) {
+      print("Scan finished.");
+      setState(() {
+        isScanning = false;
+      });
+      _scanSubscription?.cancel();
+    });
   }
 
   @override
   void dispose() {
-    _scanSubscription.cancel(); // Clean up the subscription when disposing
+    _scanSubscription?.cancel();
     super.dispose();
   }
 
@@ -44,54 +92,29 @@ class _StartGameViewState extends State<StartGameView> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Center(
-            child: ElevatedButton(
-              onPressed: isScanning ? null : _startScanning,
-              child: const Text('Pair Device'),
-            ),
+          ElevatedButton(
+            onPressed: isScanning ? null : _startScanning,
+            child: Text(isScanning ? 'Scanning...' : 'Scan for Devices'),
           ),
           const SizedBox(height: 20),
-          if (_devicesList.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20.0),
-              child: Column(
-                children: _devicesList.map((device) {
-                  return Text(
-                    device.name.isNotEmpty ? device.name : 'Unknown Device',
-                    style: const TextStyle(fontSize: 18),
-                    textAlign: TextAlign.center,
-                  );
-                }).toList(),
-              ),
+          Expanded(
+            child: ListView.builder(
+              itemCount: _devicesList.length,
+              itemBuilder: (context, index) {
+                final device = _devicesList[index];
+                return ListTile(
+                  title: Text(device.name.isNotEmpty ? device.name : 'Unknown Device'),
+                  subtitle: Text(device.remoteId.toString()),
+                  onTap: () {
+                    print('Tapped on ${device.name}');
+                    // TODO: Connect to Device
+                  },
+                );
+              },
             ),
+          ),
         ],
       ),
     );
-  }
-
-  Future<void> _startScanning() async {
-    setState(() {
-      isScanning = true;
-      _devicesList.clear(); // Clear previous results
-    });
-
-    // TODO: program currently stuck here when emulating, must test on a physical device
-    await FlutterBluePlus.adapterState.where((val) => val == BluetoothAdapterState.on).first;
-
-    // Scan for ble devices with specific name/services
-    await FlutterBluePlus.startScan(
-      withServices: [Guid("")], // Match any of the specified services
-      withNames: [""], // Match any of the specified names
-      timeout: const Duration(seconds: 15),
-    );
-
-    // Wait for scanning to stop
-    await FlutterBluePlus.isScanning.where((val) => val == false).first;
-
-    setState(() {
-      isScanning = false;
-    });
-
-    print('Scanning complete.');
   }
 }
